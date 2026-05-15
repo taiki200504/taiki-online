@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "taiki-online"
+version = "0.1.0"
+description = "Claude Code status line — model, git, context, session"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "taiki200504" }]
+requires-python = ">=3.9"
+keywords = ["claude-code", "statusline", "terminal"]
+classifiers = [
+    "Environment :: Console",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+]
+
+[project.scripts]
+taiki-online = "taiki_online.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["taiki_online*"]
