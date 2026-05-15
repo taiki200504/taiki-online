@@ -34,19 +34,28 @@ def run():
     lines_removed   = cost_data.get("total_lines_removed", 0)
     api_duration_ms = cost_data.get("total_duration_ms")
 
-    input_tokens     = ctx_data.get("total_input_tokens", 0)
-    context_size     = ctx_data.get("context_window_size", 200_000)
+    input_tokens = ctx_data.get("total_input_tokens", 0)
+    context_size = ctx_data.get("context_window_size", 200_000)
+
+    # Cache hit tokens (CC v2.x — context_window.current_usage)
+    current_usage    = ctx_data.get("current_usage") or {}
+    cache_read_tokens = current_usage.get("cache_read_input_tokens", 0)
 
     # Weekly rate limit (CC v2.1.80+)
-    rate_limits = data.get("rate_limits", {})
-    seven_day   = rate_limits.get("seven_day", {})
-    weekly_util     = seven_day.get("used_percentage") if seven_day else None
-    weekly_resets   = seven_day.get("resets_at") if seven_day else None
+    rate_limits  = data.get("rate_limits", {})
+    seven_day    = rate_limits.get("seven_day", {})
+    weekly_util  = seven_day.get("used_percentage") if seven_day else None
+    weekly_resets = seven_day.get("resets_at") if seven_day else None
 
     git_branch, modified_files, _ = get_git_info(cwd)
     last_commit = get_last_commit_elapsed(cwd)
 
     duration_sec = get_session_duration(session_id, transcript, api_duration_ms)
+
+    # $/hr burn rate — only meaningful after at least 2 minutes of session
+    burn_rate = None
+    if duration_sec and duration_sec >= 120 and total_cost > 0:
+        burn_rate = (total_cost / duration_sec) * 3600
 
     ctx = {
         "model":                    model,
@@ -54,11 +63,11 @@ def run():
         "git_branch":               git_branch,
         "modified_files":           modified_files,
         "last_commit_elapsed":      last_commit,
-        "lines_added":              lines_added,
-        "lines_removed":            lines_removed,
         "session_cost":             total_cost,
+        "burn_rate_per_hour":       burn_rate,
         "compact_tokens":           input_tokens,
         "context_window_size":      context_size,
+        "cache_read_tokens":        cache_read_tokens,
         "session_duration_seconds": duration_sec,
         "weekly_utilization":       weekly_util,
         "weekly_resets_at":         weekly_resets,

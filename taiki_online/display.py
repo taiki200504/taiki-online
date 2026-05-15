@@ -22,15 +22,30 @@ class C:
     BRANCH   = "" if NO_COLOR else "\033[38;5;118m"  # lime green
     MODIFIED = "" if NO_COLOR else "\033[1;93m"       # bright yellow
     COMMIT   = "" if NO_COLOR else "\033[38;5;250m"  # light gray
-    LINES_A  = "" if NO_COLOR else "\033[38;5;118m"  # lime green
-    LINES_D  = "" if NO_COLOR else "\033[38;5;203m"  # coral red
     COST     = "" if NO_COLOR else "\033[38;5;220m"  # gold
-    BAR_F    = "" if NO_COLOR else "\033[38;5;213m"  # hot pink filled
+    BURN     = "" if NO_COLOR else "\033[38;5;215m"  # peach (burn rate)
+    CACHE_HI = "" if NO_COLOR else "\033[38;5;118m"  # lime green (cache good)
+    CACHE_LO = "" if NO_COLOR else "\033[38;5;203m"  # coral (cache low)
     BAR_E    = "" if NO_COLOR else "\033[38;5;237m"  # dark gray empty
+    # context bar zone colors (dumb-zone theory)
+    ZONE_OK  = "" if NO_COLOR else "\033[38;5;118m"  # lime green  0–50%
+    ZONE_MID = "" if NO_COLOR else "\033[1;93m"       # yellow      50–75%
+    ZONE_HI  = "" if NO_COLOR else "\033[38;5;214m"  # orange      75–90%
+    ZONE_MAX = "" if NO_COLOR else "\033[38;5;203m"  # coral red   90%+
     LABEL    = "" if NO_COLOR else "\033[38;5;245m"  # gray label
     WARN     = "" if NO_COLOR else "\033[1;31m"       # red warning
     PCT_OK   = "" if NO_COLOR else "\033[1;97m"       # bright white
     PCT_HI   = "" if NO_COLOR else "\033[38;5;203m"  # coral red (danger)
+
+
+def _zone_color(ratio):
+    if ratio >= 0.90:
+        return C.ZONE_MAX
+    if ratio >= 0.75:
+        return C.ZONE_HI
+    if ratio >= 0.50:
+        return C.ZONE_MID
+    return C.ZONE_OK
 
 
 def strip_ansi(text):
@@ -66,11 +81,12 @@ def get_terminal_width():
     return 100
 
 
-def progress_bar(ratio, length=BAR_LEN):
+def progress_bar(ratio, length=BAR_LEN, fill_color=None):
     ratio = max(0.0, min(1.0, ratio))
     filled = round(ratio * length)
+    color = fill_color or C.ZONE_OK
     return (
-        C.BAR_F + BAR_FILLED * filled
+        color + BAR_FILLED * filled
         + C.BAR_E + BAR_EMPTY * (length - filled)
         + C.RESET
     )
@@ -141,8 +157,12 @@ def build_line1(ctx, width):
         parts.append(f"{C.COMMIT}{elapsed}{C.RESET}")
 
     cost = ctx.get("session_cost", 0)
+    burn = ctx.get("burn_rate_per_hour")
     if cost > 0:
-        parts.append(f"{C.COST}{fmt_cost(cost)}{C.RESET}")
+        cost_str = f"{C.COST}{fmt_cost(cost)}{C.RESET}"
+        if burn and burn > 0:
+            cost_str += f" {C.BURN}{fmt_cost(burn)}/h{C.RESET}"
+        parts.append(cost_str)
 
     return f"  {C.LABEL}|{C.RESET}  ".join(parts)
 
@@ -152,12 +172,22 @@ def build_line2(ctx, width):
     total = ctx.get("context_window_size", 200_000)
     ratio = used / total if total > 0 else 0
 
-    pct_color = C.PCT_HI if ratio >= 0.8 else C.PCT_OK
-    bar = progress_bar(ratio)
+    zone_color = _zone_color(ratio)
+    pct_color  = C.PCT_HI if ratio >= 0.75 else C.PCT_OK
+    bar   = progress_bar(ratio, fill_color=zone_color)
     label = f"{C.LABEL}Context{C.RESET}"
     pct   = f"{pct_color}{ratio*100:.0f}%{C.RESET}"
     nums  = f"{C.LABEL}{fmt_tokens(used)} / {fmt_tokens(total)}{C.RESET}"
-    return f"  {label}  {bar}  {pct}  {nums}"
+
+    # Cache hit ratio
+    cache_read  = ctx.get("cache_read_tokens", 0)
+    cache_ratio = cache_read / used if used > 0 else 0
+    cache_str = ""
+    if cache_read > 0:
+        cache_color = C.CACHE_HI if cache_ratio >= 0.5 else C.CACHE_LO
+        cache_str = f"  {C.LABEL}💾{C.RESET}{cache_color}{cache_ratio*100:.0f}%{C.RESET}"
+
+    return f"  {label}  {bar}  {pct}  {nums}{cache_str}"
 
 
 def build_line3(ctx, width):
@@ -166,7 +196,7 @@ def build_line3(ctx, width):
     ratio = min(1.0, used_sec / total_sec) if used_sec else 0
 
     pct_color = C.PCT_HI if ratio >= 0.8 else C.PCT_OK
-    bar = progress_bar(ratio)
+    bar = progress_bar(ratio, fill_color=C.ZONE_OK)
     label = f"{C.LABEL}Session{C.RESET}"
     pct   = f"{pct_color}{ratio*100:.0f}%{C.RESET}"
 
@@ -176,18 +206,18 @@ def build_line3(ctx, width):
 
 
 def build_line4_weekly(ctx, width):
-    util      = ctx.get("weekly_utilization")   # float 0-100 or None
-    resets_at = ctx.get("weekly_resets_at")     # ISO string or Unix int or None
+    util      = ctx.get("weekly_utilization")
+    resets_at = ctx.get("weekly_resets_at")
 
-    # If API data unavailable, skip line
     if util is None and resets_at is None:
         return None
 
     ratio = (util / 100.0) if util is not None else 0.0
     ratio = max(0.0, min(1.0, ratio))
 
-    pct_color = C.PCT_HI if ratio >= 0.8 else C.PCT_OK
-    bar   = progress_bar(ratio)
+    zone_color = _zone_color(ratio)
+    pct_color  = C.PCT_HI if ratio >= 0.75 else C.PCT_OK
+    bar   = progress_bar(ratio, fill_color=zone_color)
     label = f"{C.LABEL}Weekly {C.RESET}"
     pct   = f"{pct_color}{ratio*100:.0f}%{C.RESET}"
 
