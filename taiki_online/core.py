@@ -37,6 +37,12 @@ def run():
     input_tokens     = ctx_data.get("total_input_tokens", 0)
     context_size     = ctx_data.get("context_window_size", 200_000)
 
+    # Weekly rate limit (CC v2.1.80+)
+    rate_limits = data.get("rate_limits", {})
+    seven_day   = rate_limits.get("seven_day", {})
+    weekly_util     = seven_day.get("used_percentage") if seven_day else None
+    weekly_resets   = seven_day.get("resets_at") if seven_day else None
+
     git_branch, modified_files, _ = get_git_info(cwd)
     last_commit = get_last_commit_elapsed(cwd)
 
@@ -54,6 +60,8 @@ def run():
         "compact_tokens":           input_tokens,
         "context_window_size":      context_size,
         "session_duration_seconds": duration_sec,
+        "weekly_utilization":       weekly_util,
+        "weekly_resets_at":         weekly_resets,
     }
 
     sys.stdout.write(render(ctx) + "\n")

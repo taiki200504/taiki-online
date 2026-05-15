@@ -3,6 +3,7 @@ import re
 import shutil
 import subprocess
 import unicodedata
+from datetime import datetime, timedelta, timezone
 
 
 BAR_FILLED = "▓"
@@ -15,21 +16,21 @@ NO_COLOR = os.environ.get("NO_COLOR") or os.environ.get("TAIKI_NO_COLOR")
 class C:
     RESET   = "" if NO_COLOR else "\033[0m"
     BOLD    = "" if NO_COLOR else "\033[1m"
-    # cool blue / purple palette
-    MODEL   = "" if NO_COLOR else "\033[1;35m"   # bright magenta
-    DIR     = "" if NO_COLOR else "\033[1;36m"   # bright cyan
-    BRANCH  = "" if NO_COLOR else "\033[1;34m"   # bright blue
-    MODIFIED = "" if NO_COLOR else "\033[1;33m"  # yellow for dirty
-    COMMIT  = "" if NO_COLOR else "\033[38;5;245m"  # grey
-    LINES_A = "" if NO_COLOR else "\033[1;32m"   # green
-    LINES_D = "" if NO_COLOR else "\033[1;31m"   # red
-    COST    = "" if NO_COLOR else "\033[1;37m"   # white
-    BAR_F   = "" if NO_COLOR else "\033[1;34m"   # blue filled
-    BAR_E   = "" if NO_COLOR else "\033[38;5;237m"  # dark gray empty
-    LABEL   = "" if NO_COLOR else "\033[38;5;245m"  # gray label
-    WARN    = "" if NO_COLOR else "\033[1;31m"   # red warning
-    PCT_OK  = "" if NO_COLOR else "\033[1;37m"
-    PCT_HI  = "" if NO_COLOR else "\033[1;31m"
+    # vivid palette — high contrast on dark terminals
+    MODEL    = "" if NO_COLOR else "\033[38;5;213m"  # hot pink
+    DIR      = "" if NO_COLOR else "\033[38;5;123m"  # sky blue
+    BRANCH   = "" if NO_COLOR else "\033[38;5;118m"  # lime green
+    MODIFIED = "" if NO_COLOR else "\033[1;93m"       # bright yellow
+    COMMIT   = "" if NO_COLOR else "\033[38;5;250m"  # light gray
+    LINES_A  = "" if NO_COLOR else "\033[38;5;118m"  # lime green
+    LINES_D  = "" if NO_COLOR else "\033[38;5;203m"  # coral red
+    COST     = "" if NO_COLOR else "\033[38;5;220m"  # gold
+    BAR_F    = "" if NO_COLOR else "\033[38;5;213m"  # hot pink filled
+    BAR_E    = "" if NO_COLOR else "\033[38;5;237m"  # dark gray empty
+    LABEL    = "" if NO_COLOR else "\033[38;5;245m"  # gray label
+    WARN     = "" if NO_COLOR else "\033[1;31m"       # red warning
+    PCT_OK   = "" if NO_COLOR else "\033[1;97m"       # bright white
+    PCT_HI   = "" if NO_COLOR else "\033[38;5;203m"  # coral red (danger)
 
 
 def strip_ansi(text):
@@ -179,6 +180,49 @@ def build_line3(ctx, width):
     return f"  {label}  {bar}  {pct}  {dur}"
 
 
+def build_line4_weekly(ctx, width):
+    util      = ctx.get("weekly_utilization")   # float 0-100 or None
+    resets_at = ctx.get("weekly_resets_at")     # ISO string or Unix int or None
+
+    # If API data unavailable, skip line
+    if util is None and resets_at is None:
+        return None
+
+    ratio = (util / 100.0) if util is not None else 0.0
+    ratio = max(0.0, min(1.0, ratio))
+
+    pct_color = C.PCT_HI if ratio >= 0.8 else C.PCT_OK
+    bar   = progress_bar(ratio)
+    label = f"{C.LABEL}Weekly {C.RESET}"
+    pct   = f"{pct_color}{ratio*100:.0f}%{C.RESET}"
+
+    remaining_str = None
+    if resets_at is not None:
+        try:
+            if isinstance(resets_at, (int, float)):
+                resets_dt = datetime.fromtimestamp(resets_at, tz=timezone.utc)
+            else:
+                resets_dt = datetime.fromisoformat(str(resets_at).replace("Z", "+00:00"))
+            remaining = max(0, (resets_dt - datetime.now(tz=timezone.utc)).total_seconds())
+            if remaining < 3600:
+                remaining_str = f"{int(remaining // 60)}m left"
+            elif remaining < 86400:
+                h = int(remaining // 3600)
+                m = int((remaining % 3600) // 60)
+                remaining_str = f"{h}h{m:02d}m left"
+            else:
+                d = int(remaining // 86400)
+                h = int((remaining % 86400) // 3600)
+                remaining_str = f"{d}d{h:02d}h left"
+        except (ValueError, TypeError, OSError):
+            pass
+
+    parts = [f"  {label} {bar}  {pct}"]
+    if remaining_str:
+        parts.append(f"  {C.LABEL}{remaining_str}{C.RESET}")
+    return "".join(parts)
+
+
 def render(ctx):
     width = get_terminal_width()
     lines = [
@@ -186,4 +230,7 @@ def render(ctx):
         build_line2(ctx, width),
         build_line3(ctx, width),
     ]
+    weekly = build_line4_weekly(ctx, width)
+    if weekly:
+        lines.append(weekly)
     return "\n".join(f"\033[0m\033[1;97m{ln}\033[0m" for ln in lines)
