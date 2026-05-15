@@ -140,11 +140,6 @@ def build_line1(ctx, width):
     if elapsed:
         parts.append(f"{C.COMMIT}{elapsed}{C.RESET}")
 
-    added   = ctx.get("lines_added", 0)
-    removed = ctx.get("lines_removed", 0)
-    if added or removed:
-        parts.append(f"{C.LINES_A}+{added}{C.RESET}/{C.LINES_D}-{removed}{C.RESET}")
-
     cost = ctx.get("session_cost", 0)
     if cost > 0:
         parts.append(f"{C.COST}{fmt_cost(cost)}{C.RESET}")
