@@ -161,7 +161,8 @@ def build_line1(ctx, width):
     if cost > 0:
         cost_str = f"{C.COST}{fmt_cost(cost)}{C.RESET}"
         if burn and burn > 0:
-            cost_str += f" {C.BURN}{fmt_cost(burn)}/h{C.RESET}"
+            burn_color = C.WARN if burn >= 2.0 else C.BURN
+            cost_str += f" {burn_color}{fmt_cost(burn)}/h{C.RESET}"
         parts.append(cost_str)
 
     return f"  {C.LABEL}|{C.RESET}  ".join(parts)
@@ -187,7 +188,24 @@ def build_line2(ctx, width):
         cache_color = C.CACHE_HI if cache_ratio >= 0.5 else C.CACHE_LO
         cache_str = f"  {C.LABEL}💾{C.RESET}{cache_color}{cache_ratio*100:.0f}%{C.RESET}"
 
-    return f"  {label}  {bar}  {pct}  {nums}{cache_str}"
+    # /compact timing hint: estimate minutes until 70% threshold
+    compact_str = ""
+    burn = ctx.get("burn_rate_per_hour")
+    target_tokens = total * 0.70
+    if burn and burn > 0 and used < target_tokens:
+        tokens_per_hour = burn / (ctx.get("session_cost", 0) / used) if ctx.get("session_cost", 0) > 0 else None
+        # Fallback: derive tokens/hour from session elapsed if available
+        elapsed_sec = ctx.get("session_duration_seconds") or 0
+        if tokens_per_hour is None and elapsed_sec > 60:
+            tokens_per_hour = used / (elapsed_sec / 3600)
+        if tokens_per_hour and tokens_per_hour > 0:
+            hours_left = (target_tokens - used) / tokens_per_hour
+            mins_left = int(hours_left * 60)
+            if mins_left < 120:
+                hint_color = C.WARN if mins_left < 20 else C.LABEL
+                compact_str = f"  {hint_color}⏱ compact in ~{mins_left}m{C.RESET}"
+
+    return f"  {label}  {bar}  {pct}  {nums}{cache_str}{compact_str}"
 
 
 def build_line3(ctx, width):
@@ -195,14 +213,29 @@ def build_line3(ctx, width):
     total_sec = 5 * 3600
     ratio = min(1.0, used_sec / total_sec) if used_sec else 0
 
-    pct_color = C.PCT_HI if ratio >= 0.8 else C.PCT_OK
-    bar = progress_bar(ratio, fill_color=C.ZONE_OK)
+    remaining_sec = max(0, total_sec - used_sec)
+    # Warn when < 30 min remaining (ratio > 0.8) or critically low (< 10 min)
+    if remaining_sec < 600:
+        pct_color = C.WARN
+        bar_color = C.ZONE_MAX
+    elif remaining_sec < 1800:
+        pct_color = C.PCT_HI
+        bar_color = C.ZONE_HI
+    else:
+        pct_color = C.PCT_OK
+        bar_color = C.ZONE_OK
+
+    bar   = progress_bar(ratio, fill_color=bar_color)
     label = f"{C.LABEL}Session{C.RESET}"
     pct   = f"{pct_color}{ratio*100:.0f}%{C.RESET}"
 
     elapsed_str = fmt_duration(used_sec) or "0m"
-    dur = f"{C.LABEL}{elapsed_str} / 5h{C.RESET}"
-    return f"  {label}  {bar}  {pct}  {dur}"
+    remaining_str = fmt_duration(remaining_sec)
+    if remaining_str and remaining_sec < 1800:
+        time_str = f"{C.LABEL}{elapsed_str} / 5h{C.RESET}  {pct_color}({remaining_str} left){C.RESET}"
+    else:
+        time_str = f"{C.LABEL}{elapsed_str} / 5h{C.RESET}"
+    return f"  {label}  {bar}  {pct}  {time_str}"
 
 
 def build_line4_weekly(ctx, width):
@@ -242,7 +275,7 @@ def build_line4_weekly(ctx, width):
         except (ValueError, TypeError, OSError):
             pass
 
-    parts = [f"  {label} {bar}  {pct}"]
+    parts = [f"  {label}  {bar}  {pct}"]
     if remaining_str:
         parts.append(f"  {C.LABEL}{remaining_str}{C.RESET}")
     return "".join(parts)
